@@ -4,8 +4,8 @@
  */
 export function CameraPlaceholder() {
   return (
-    <div className="bg-gray-800 rounded-lg shadow-md p-4 h-64 flex flex-col items-center justify-center">
-      <div className="text-gray-400 text-center">
+    <div className="bg-slate-900/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 h-80 flex flex-col items-center justify-center">
+      <div className="text-slate-500 text-center">
         <svg
           className="w-16 h-16 mx-auto mb-4"
           fill="none"
@@ -19,8 +19,8 @@ export function CameraPlaceholder() {
             d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
           />
         </svg>
-        <p className="text-lg font-medium">실시간 카메라 영역</p>
-        <p className="text-sm text-gray-500 mt-1">추후 구현 예정</p>
+        <p className="text-lg font-medium text-slate-400">실시간 카메라 영역</p>
+        <p className="text-sm text-slate-600 mt-1">추후 구현 예정</p>
       </div>
     </div>
   );
