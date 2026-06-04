@@ -1,11 +1,11 @@
 // Components
-export { Dashboard } from './components/Dashboard';
+export { UnifiedDashboard } from './components/UnifiedDashboard';
 export { MonitoringChart } from './components/MonitoringChart';
-export { CameraPlaceholder } from './components/CameraPlaceholder';
-export { DataDisplay } from './components/DataDisplay';
+export { ThemeToggle } from './components/ThemeToggle';
 
 // Hooks
 export { useMonitoringData } from './hooks/useMonitoringData';
+export { useTheme } from './hooks/useTheme';
 
 // Types
-export type { VarProcessData, MonitoringState, ChartDataPoint } from './types';
+export type { VarProcessData, MonitoringState, ChartDataPoint, EventLogEntry } from './types';

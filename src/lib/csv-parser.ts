@@ -37,7 +37,6 @@ function parseLine(line: string): VarProcessData | null {
       voltage: parseFloat(values[2]) || 0,
       current: parseFloat(values[3]) || 0,
       vacuum: parseFloat(values[4]) || 0,
-      height: parseFloat(values[5]) || 0,
       descentSpeed: parseFloat(values[14]) || 0,
       elapsedTime: parseInt(values[11], 10) || 0,
     };

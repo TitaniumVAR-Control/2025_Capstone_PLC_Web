@@ -1,35 +1,145 @@
 @import "tailwindcss";
+@variant dark (.dark &);
 
 :root {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: dark;
+  color-scheme: light dark;
+
+  /* ── Light theme (default) ── */
+  --bg-base: #f0f4f8;
+  --bg-surface: #ffffff;
+  --bg-surface-alt: rgba(248, 250, 252, 0.5);
+  --border-primary: #e2e8f0;
+  --border-secondary: #f1f5f9;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-tertiary: #94a3b8;
+  --text-muted: #cbd5e1;
+  --scrollbar-track: #e2e8f0;
+  --scrollbar-thumb: #94a3b8;
+  --scrollbar-thumb-hover: #64748b;
+  --input-bg: #ffffff;
+  --input-border: #e2e8f0;
+}
+
+.dark {
+  --bg-base: #0f172a;
+  --bg-surface: #1e293b;
+  --bg-surface-alt: rgba(30, 41, 59, 0.5);
+  --border-primary: #334155;
+  --border-secondary: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-tertiary: #64748b;
+  --text-muted: #475569;
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #475569;
+  --scrollbar-thumb-hover: #64748b;
+  --input-bg: #0f172a;
+  --input-border: #334155;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #020617;
-  color: #f1f5f9;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
 }
 
-/* Dark theme scrollbar */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #334155;
-  border-radius: 4px;
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* Tabular numbers for data displays */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Print styles ── */
+@media print {
+  /* 화면용 UI 숨김 */
+  .no-print {
+    display: none !important;
+  }
+
+  /* 리포트 콘텐츠 전체 폭 */
+  body, html {
+    background: white !important;
+    color: black !important;
+  }
+
+  /* 배경색·보더 강제 출력 (크롬/엣지) */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 공정정보 / 그래프 페이지 구분 */
+  .print\:page-break-after {
+    page-break-after: always;
+  }
+
+  /* 인쇄 시 숨겨진 탭 내용 모두 표시 */
+  .print\:block {
+    display: block !important;
+  }
+
+  /* 페이지 설정 */
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  /* 섹션 ROW가 페이지 경계에서 잘리지 않도록 */
+  .print-row-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-row-avoid tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 사진 섹션: 새 페이지 강제하지 않고 자연스럽게 흐름 (단, 헤더+그리드는 가급적 같이) */
+  .print-photo-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 사진 grid 내부 잘림 방지 */
+  .print-grid-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* 그래프 섹션: 항상 새 페이지에서 시작 */
+  .print-graph-section {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+
+  /* 그래프 카드: 페이지 경계에서 카드가 쪼개지지 않도록 */
+  .print-graph-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
 }
