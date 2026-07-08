@@ -19,7 +19,10 @@ interface Props {
  */
 export function PlcEventLogPanel({ events, maxItems = 30 }: Props) {
   const plcEvents = events.filter(
-    (e) => e.message.startsWith('[SIM]') || e.message.startsWith('[HMI]'),
+    (e) =>
+      e.message.startsWith('[SIM]') ||
+      e.message.startsWith('[HMI]') ||
+      e.message.startsWith('[모델]'),
   );
 
   return (

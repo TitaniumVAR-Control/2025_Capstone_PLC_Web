@@ -305,5 +305,5 @@ export function useMonitoringData() {
     }));
   }, []);
 
-  return { state, reset, events, completionNotice, frozenHistory };
+  return { state, reset, events, addEvent, completionNotice, frozenHistory };
 }

@@ -7,14 +7,14 @@ import { ThemeToggle } from './ThemeToggle';
 import { ReportPage } from '../../report/components/ReportPage';
 import { HistoryPage } from '../../history/components/HistoryPage';
 import { PlcDiagPage } from '../../plc-diag/components/PlcDiagPage';
-import { DEFAULT_MELT_RATIO, meltToDescent, descentToMelt } from '../../../lib/constants';
+import { DEFAULT_MELT_RATIO, meltToDescent, descentToMelt, computeStartPosition, CYLINDER_TO_FLOOR_MM, ARC_GAP_MM } from '../../../lib/constants';
 
 const BACKEND_PORT = import.meta.env.VITE_BACKEND_PORT ?? '8000';
 const API_BASE = `http://${window.location.hostname}:${BACKEND_PORT}`;
 const ADMIN_WS_URL = `ws://${window.location.hostname}:${BACKEND_PORT}/ws/admin`;
 
 // 작업자 입력 = 목표 용해량(mm). 백엔드에는 ÷ ratio 적용한 잉곳 이동 거리를 전달.
-const DEFAULT_MELT_LENGTH_MM = 150;
+// 기본값 없음 — 작업자가 매번 직접 입력(입력 전 빈칸).
 
 const PHASE_LABEL: Record<string, string> = {
   DESCENT_INIT: '아크 전 하강',
@@ -99,7 +99,7 @@ type StepStatus = 'done' | 'active' | 'waiting';
 
 export function UnifiedDashboard() {
   const { dark, toggle } = useTheme();
-  const { state, completionNotice, frozenHistory, reset, events } = useMonitoringData();
+  const { state, completionNotice, frozenHistory, reset, events, addEvent } = useMonitoringData();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeTab, setActiveTab] = useState<MainTab>('monitoring');
 
@@ -110,18 +110,33 @@ export function UnifiedDashboard() {
   const [dataSource, setDataSource] = useState<'sim' | 'hmi'>('sim');
   // PLC 실 송신 토글. false=dry-run(프로토콜 콜만, 장비 안 움직임), true=실 PLC 송신.
   const [plcTxEnabled, setPlcTxEnabled] = useState<boolean>(false);
-  const [meltLengthMm, setMeltLengthMm] = useState<number>(DEFAULT_MELT_LENGTH_MM);
+  // 작업자가 매 작업마다 실측값을 직접 입력. 입력 전에는 빈칸(NaN) — 하드코딩 기본값 없음.
+  // NaN 이면 inputsValid=false 라 power-on 이 막혀 백엔드 fallback 에 의존하지 않는다.
+  const [meltLengthMm, setMeltLengthMm] = useState<number>(NaN);
   const [meltRatio, setMeltRatio] = useState<number>(DEFAULT_MELT_RATIO);
-  const [startPositionMm, setStartPositionMm] = useState<number>(270);
+  // 시작위치는 칩/버켓 높이 + 잉곳 높이로 역산한다(아래 startPositionMm 미리보기).
+  const [bucketHeightMm, setBucketHeightMm] = useState<number>(NaN);
+  const [ingotHeightMm, setIngotHeightMm] = useState<number>(NaN);
   const [showProcessChecklist, setShowProcessChecklist] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // 시작위치는 사용자가 직접 입력한 값이 PLC S3,1 의 이동 목표로 그대로 사용되므로
-  // 빈 칸/NaN 상태에서는 power-on 을 막아 백엔드 fallback 에 의존하지 않게 한다.
+  // arc_gap 간격까지 하강하는 시작위치(lift_pos) = 818 - (칩/버켓 높이 + arc_gap + 잉곳 높이).
+  // 백엔드가 동일 공식으로 S3,1 이동 목표를 다시 계산(source of truth)하며 여기서는 미리보기.
+  const startPositionMm = useMemo(
+    () => computeStartPosition(bucketHeightMm, ingotHeightMm),
+    [bucketHeightMm, ingotHeightMm],
+  );
+  // 칩/버켓 높이 + 잉곳 높이 + 12 가 818 을 넘으면 시작위치가 음수 → 물리적으로 불가능.
+  const startPosValid = Number.isFinite(startPositionMm) && startPositionMm > 0;
+
+  // 시작위치 입력(칩/버켓·잉곳 높이)이 비거나 시작위치가 음수면 power-on 을 막아 백엔드
+  // fallback 에 의존하지 않게 한다.
   const inputsValid =
     Number.isFinite(meltLengthMm) && meltLengthMm > 0 &&
     Number.isFinite(meltRatio) && meltRatio > 0 &&
-    Number.isFinite(startPositionMm) && startPositionMm > 0;
+    Number.isFinite(bucketHeightMm) && bucketHeightMm > 0 &&
+    Number.isFinite(ingotHeightMm) && ingotHeightMm > 0 &&
+    startPosValid;
   // 백엔드 전달용 잉곳 이동 거리 (target_length_mm) = 용해량 ÷ ratio
   const targetDescentMm = useMemo(
     () => (inputsValid ? Number(meltToDescent(meltLengthMm, meltRatio).toFixed(2)) : NaN),
@@ -177,6 +192,42 @@ export function UnifiedDashboard() {
     }
   };
 
+  // 실측(real PLC) 모드 토글. OFF=시뮬레이터, ON=실 PLC 센서로 AI 실운전.
+  // 전원 ON/운전 중에는 변경 불가 (모드는 power-on 시점에 확정).
+  const toggleRealMode = async () => {
+    if (powerOn || running) return;
+    const next = dataSource !== 'hmi';
+    if (next) {
+      const ok = window.confirm(
+        '실측(실 PLC) 모드로 전환합니다.\n\n' +
+        '· 전원 ON 시 시뮬레이터가 아니라 실제 PLC에서 전류·전압 등을 받아 AI가 하강속도를 계산합니다.\n' +
+        "· 실측 ON 시 'PLC 송신'도 자동으로 ON 됩니다 → 계산된 명령이 실제 장비로 전송되어 잉곳이 실제로 하강합니다.\n" +
+        '· 전원 ON 시 HMI 연결이 필수이며, 연결 실패 시 작업을 시작할 수 없습니다.\n\n' +
+        '실측 모드로 전환하시겠습니까?'
+      );
+      if (!ok) return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/data-source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ real: next }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setDataSource(d.real ? 'hmi' : 'sim');
+        // 실측 ON ⟺ PLC 송신 ON (백엔드가 함께 토글) — UI 상태도 동기화
+        if (typeof d.plc_transmission !== 'undefined') setPlcTxEnabled(Boolean(d.plc_transmission));
+      } else {
+        const body = await res.text();
+        alert(`실측 모드 전환 실패: ${res.status}\n${body}`);
+      }
+    } catch (err) {
+      console.error('[real-mode-toggle] network error', err);
+      alert(`실측 모드 전환 네트워크 오류: ${(err as Error).message}`);
+    }
+  };
+
   useEffect(() => {
     const ws = new WebSocket(ADMIN_WS_URL);
     wsRef.current = ws;
@@ -197,7 +248,10 @@ export function UnifiedDashboard() {
 
   const turnPowerOn = async () => {
     if (!inputsValid) {
-      alert('목표 용해량과 환산비를 0보다 큰 값으로 입력해주세요.');
+      alert(
+        '입력값을 확인해주세요.\n· 칩/버켓 높이·잉곳 높이·목표 용해량·환산비는 0보다 커야 합니다.\n' +
+        '· 계산된 시작위치는 0보다 커야 합니다 (칩/버켓+잉곳+12 ≤ 818).',
+      );
       return;
     }
     try {
@@ -206,7 +260,9 @@ export function UnifiedDashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_length_mm: targetDescentMm,
-          start_position_mm: Number.isFinite(startPositionMm) ? startPositionMm : null,
+          // 칩/버켓·잉곳 높이를 보내면 백엔드가 12mm 간격 시작위치를 역산한다.
+          bucket_height_mm: bucketHeightMm,
+          ingot_height_mm: ingotHeightMm,
         }),
       });
       if (res.ok) {
@@ -259,7 +315,10 @@ export function UnifiedDashboard() {
 
   const startSim = async () => {
     if (!inputsValid) {
-      alert('목표 용해량과 환산비를 0보다 큰 값으로 입력해주세요.');
+      alert(
+        '입력값을 확인해주세요.\n· 칩/버켓 높이·잉곳 높이·목표 용해량·환산비는 0보다 커야 합니다.\n' +
+        '· 계산된 시작위치는 0보다 커야 합니다 (칩/버켓+잉곳+12 ≤ 818).',
+      );
       return;
     }
     try {
@@ -273,9 +332,11 @@ export function UnifiedDashboard() {
   };
 
   const stopSim = async () => {
+    // 작업 중지 = 안전 정지: 실린더 강제 상승(S3,4) → 전원 OFF(S2,0) → AI OFF(S6,0).
+    //   백엔드 /power-off 가 위 시퀀스를 발행하고 runner 취소 + 연결 정리까지 수행한다.
     try {
-      await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
-      setRunning(false);
+      await fetch(`${API_BASE}/api/power-off`, { method: 'POST' });
+      setRunning(false); setPowerOn(false); setAdminStatus(null);
     } catch { /* ignore */ }
   };
 
@@ -284,7 +345,10 @@ export function UnifiedDashboard() {
       const res = await fetch(`${API_BASE}/api/reload-model`, { method: 'POST' });
       const d = await res.json();
       setModelLoaded(d.success);
-    } catch { /* ignore */ }
+      addEvent(`[모델] 재로드 ${d.success ? '완료' : '실패'}`, d.success ? 'info' : 'error');
+    } catch {
+      addEvent('[모델] 재로드 실패: 서버 응답 없음', 'error');
+    }
   };
 
   const { data: monitorData, meta } = state;
@@ -460,6 +524,31 @@ export function UnifiedDashboard() {
                 </button>
               </>
             )}
+            {/* 실측(real PLC) 토글: OFF = 시뮬레이터, ON = 실 PLC 센서로 AI 실운전 */}
+            <span className="h-3.5 w-px bg-[var(--border-primary)]" />
+            <button
+              onClick={toggleRealMode}
+              disabled={powerOn || running}
+              title={
+                powerOn || running
+                  ? '실측 모드는 전원을 끈 상태에서만 변경할 수 있습니다'
+                  : dataSource === 'hmi'
+                    ? 'ON: 전원 ON 시 실 PLC 센서로 AI 실운전 (시뮬레이터 미사용)'
+                    : 'OFF: 시뮬레이터 데이터로 동작 (실 PLC 미사용)'
+              }
+              className={`px-3 py-1 rounded-md text-xs font-bold tracking-wide transition-colors shadow-sm flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${
+                dataSource === 'hmi'
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-400'
+                  : 'bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-[var(--text-primary)] border border-[var(--border-primary)]'
+              }`}
+            >
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  dataSource === 'hmi' ? 'bg-white' : 'bg-slate-400 dark:bg-slate-500'
+                }`}
+              />
+              실측 {dataSource === 'hmi' ? 'ON' : 'OFF'}
+            </button>
             {/* PLC 송신 토글: OFF = 프로토콜 콜만 (장비 안 움직임), ON = 실 PLC 송신 */}
             <span className="h-3.5 w-px bg-[var(--border-primary)]" />
             <button
@@ -595,26 +684,28 @@ export function UnifiedDashboard() {
           <section>
             <span className={sectionLabel}>공정 설정</span>
             <div className="space-y-3">
+              {/* 시작위치 역산 입력: 칩/버켓 높이 + 잉곳 높이 */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label htmlFor="melt-length-input" className="text-xs text-[var(--text-tertiary)] block mb-1">
-                    목표 용해량 (mm)
+                  <label htmlFor="bucket-height-input" className="text-xs text-[var(--text-tertiary)] block mb-1">
+                    칩/버켓 높이 (mm)
                   </label>
                   <div className="relative">
                     <input
-                      id="melt-length-input"
+                      id="bucket-height-input"
                       type="text"
                       inputMode="decimal"
-                      value={Number.isFinite(meltLengthMm) ? meltLengthMm : ''}
+                      value={Number.isFinite(bucketHeightMm) ? bucketHeightMm : ''}
                       onChange={e => {
                         const raw = e.target.value;
-                        if (raw === '') { setMeltLengthMm(NaN); return; }
+                        if (raw === '') { setBucketHeightMm(NaN); return; }
                         const v = Number(raw);
                         if (!Number.isFinite(v)) return;
-                        setMeltLengthMm(v);
+                        setBucketHeightMm(v);
                       }}
                       disabled={running}
-                      placeholder="예: 150"
+                      title="틸팅용기 바닥에 넣은 칩/버켓 높이"
+                      placeholder="예: 256"
                       className={`${inputCls} pr-8`}
                     />
                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-tertiary)] pointer-events-none">
@@ -623,31 +714,80 @@ export function UnifiedDashboard() {
                   </div>
                 </div>
                 <div>
-                  <label htmlFor="start-position-input" className="text-xs text-[var(--text-tertiary)] block mb-1">
-                    시작위치 (mm)
+                  <label htmlFor="ingot-height-input" className="text-xs text-[var(--text-tertiary)] block mb-1">
+                    잉곳 높이 (mm)
                   </label>
                   <div className="relative">
                     <input
-                      id="start-position-input"
+                      id="ingot-height-input"
                       type="text"
                       inputMode="decimal"
-                      value={Number.isFinite(startPositionMm) ? startPositionMm : ''}
+                      value={Number.isFinite(ingotHeightMm) ? ingotHeightMm : ''}
                       onChange={e => {
                         const raw = e.target.value;
-                        if (raw === '') { setStartPositionMm(NaN); return; }
+                        if (raw === '') { setIngotHeightMm(NaN); return; }
                         const v = Number(raw);
                         if (!Number.isFinite(v)) return;
-                        setStartPositionMm(v);
+                        setIngotHeightMm(v);
                       }}
                       disabled={running}
-                      title="잉곳 윗면 위치. S3,1 실제 이동 목표는 이 값 - 15mm"
-                      placeholder="예: 270"
+                      title="작업할 잉곳(전극) 높이"
+                      placeholder="예: 280"
                       className={`${inputCls} pr-8`}
                     />
                     <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-tertiary)] pointer-events-none">
                       mm
                     </span>
                   </div>
+                </div>
+              </div>
+              {/* 계산된 시작위치 (S3-1 이동 목표) — 12mm 간격까지 자동 하강 */}
+              <div className={`rounded-md border px-3 py-2 ${startPosValid
+                ? 'border-[var(--border-primary)] bg-[var(--bg-base)]'
+                : 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20'}`}>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider">시작위치 (S3-1 · {ARC_GAP_MM}mm 간격)</span>
+                  <span className={`text-base font-bold tabular-nums ${startPosValid
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-red-600 dark:text-red-400'}`}>
+                    {Number.isFinite(startPositionMm) ? startPositionMm.toFixed(0) : '—'}
+                    <span className="ml-0.5 text-[10px] font-medium text-[var(--text-tertiary)]">mm</span>
+                  </span>
+                </div>
+                <p className="mt-1 text-[10px] text-[var(--text-tertiary)] leading-tight">
+                  {CYLINDER_TO_FLOOR_MM} − (칩/버켓 {Number.isFinite(bucketHeightMm) ? bucketHeightMm : '—'} + {ARC_GAP_MM} + 잉곳 {Number.isFinite(ingotHeightMm) ? ingotHeightMm : '—'}) · lift_pos 기준
+                </p>
+                {!startPosValid && (
+                  <p className="mt-1 text-[10px] font-medium text-red-600 dark:text-red-400 leading-tight">
+                    ⚠ 시작위치가 0 이하입니다 — 칩/버켓·잉곳 높이를 확인하세요
+                  </p>
+                )}
+              </div>
+              {/* 목표 용해량 */}
+              <div>
+                <label htmlFor="melt-length-input" className="text-xs text-[var(--text-tertiary)] block mb-1">
+                  목표 용해량 (mm)
+                </label>
+                <div className="relative">
+                  <input
+                    id="melt-length-input"
+                    type="text"
+                    inputMode="decimal"
+                    value={Number.isFinite(meltLengthMm) ? meltLengthMm : ''}
+                    onChange={e => {
+                      const raw = e.target.value;
+                      if (raw === '') { setMeltLengthMm(NaN); return; }
+                      const v = Number(raw);
+                      if (!Number.isFinite(v)) return;
+                      setMeltLengthMm(v);
+                    }}
+                    disabled={running}
+                    placeholder="예: 150"
+                    className={`${inputCls} pr-8`}
+                  />
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-tertiary)] pointer-events-none">
+                    mm
+                  </span>
                 </div>
               </div>
               {/* 환산비: 안내 라인에 inline 작게 — 거의 변경 없는 값이라 advanced 톤 */}

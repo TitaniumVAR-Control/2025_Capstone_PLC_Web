@@ -401,6 +401,14 @@ function Rg1Panel({ rg1, onRefresh, disabled }: { rg1: DiagRg1 | null; onRefresh
       {rg1?.error && (
         <p className="text-xs text-red-500 mb-2">{rg1.error}</p>
       )}
+      {rg1?.raw && (
+        <div className="mb-2">
+          <p className="text-[10px] text-[var(--text-tertiary)] mb-0.5">와이어 원문 (raw)</p>
+          <pre className="text-[10px] leading-tight whitespace-pre-wrap break-all rounded bg-[var(--bg-base)] border border-[var(--border-secondary)] p-1.5 text-[var(--text-secondary)]">
+            {rg1.raw}
+          </pre>
+        </div>
+      )}
       {!rg1?.parsed ? (
         <p className="text-xs text-[var(--text-secondary)]">아직 RG1 수신 없음</p>
       ) : (
